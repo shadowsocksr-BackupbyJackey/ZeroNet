@@ -75,7 +75,7 @@ class UiWebsocketPlugin(object):
             else:
                 row["bytes_downloaded"] = 0
 
-            row["is_downloading"] = bool(next((task for task in site.worker_manager.tasks if task["inner_path"].startswith(row["inner_path"])), False))
+            row["is_downloading"] = bool(next((inner_path for inner_path in site.bad_files if inner_path.startswith(row["inner_path"])), False))
 
         # Add leech / seed stats
         row["peer_seed"] = 0
@@ -132,8 +132,12 @@ class UiWebsocketPlugin(object):
         wheres_raw = []
         if "bigfile" in filter:
             wheres["size >"] = 1024 * 1024 * 10
-        if "downloaded" in filter:
+
+        if "not_downloaded" in filter:
+            wheres["is_downloaded"] = 0
+        elif "downloaded" in filter:
             wheres_raw.append("(is_downloaded = 1 OR is_pinned = 1)")
+
         if "pinned" in filter:
             wheres["is_pinned"] = 1
 

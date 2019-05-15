@@ -145,7 +145,14 @@ class UiWebsocketPlugin(object):
                 include_site = filter_storage.site_manager.get(include["address"])
                 if not include_site:
                     continue
-                content = include_site.storage.loadJson(include["inner_path"])
+                try:
+                    content = include_site.storage.loadJson(include["inner_path"])
+                    include["error"] = None
+                except Exception as err:
+                    if include_site.settings["own"]:
+                        include_site.log.warning("Error loading filter %s: %s" % (include["inner_path"], err))
+                    content = {}
+                    include["error"] = str(err)
                 include["mutes"] = content.get("mutes", {})
                 include["siteblocks"] = content.get("siteblocks", {})
             back.append(include)
@@ -188,7 +195,11 @@ class UiRequestPlugin(object):
         if self.server.site_manager.isDomain(address):
             address = self.server.site_manager.resolveDomain(address)
 
-        address_sha256 = "0x" + hashlib.sha256(address).hexdigest()
+        if address:
+            address_sha256 = "0x" + hashlib.sha256(address).hexdigest()
+        else:
+            address_sha256 = None
+
         if filter_storage.isSiteblocked(address) or filter_storage.isSiteblocked(address_sha256):
             site = self.server.site_manager.get(config.homepage)
             if not extra_headers:

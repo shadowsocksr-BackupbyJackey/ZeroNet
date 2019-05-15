@@ -72,12 +72,6 @@ class UiRequest(object):
             else:
                 return False
 
-        if self.server.learn_allowed_host:
-            # Learn the first request's host as allowed one
-            self.server.learn_allowed_host = False
-            self.learnHost(host)
-            return True
-
         return False
 
     # Call the request handler function base on path
@@ -109,7 +103,7 @@ class UiRequest(object):
 
             extra_headers = {"Access-Control-Allow-Origin": "null"}
 
-            self.sendHeader(content_type=content_type, extra_headers=extra_headers)
+            self.sendHeader(content_type=content_type, extra_headers=extra_headers, noscript=True)
             return ""
 
         if path == "/":
@@ -235,6 +229,16 @@ class UiRequest(object):
         else:
             return referer
 
+    def isScriptNonceSupported(self):
+        user_agent = self.env.get("HTTP_USER_AGENT")
+        if "Edge/" in user_agent:
+            is_script_nonce_supported = False
+        elif "Safari/" in user_agent and "Chrome/" not in user_agent:
+            is_script_nonce_supported = False
+        else:
+            is_script_nonce_supported = True
+        return is_script_nonce_supported
+
     # Send response headers
     def sendHeader(self, status=200, content_type="text/html", noscript=False, allow_ajax=False, script_nonce=None, extra_headers=[]):
         headers = {}
@@ -242,12 +246,18 @@ class UiRequest(object):
         headers["Connection"] = "Keep-Alive"
         headers["Keep-Alive"] = "max=25, timeout=30"
         headers["X-Frame-Options"] = "SAMEORIGIN"
-        if content_type != "text/html" and self.env.get("HTTP_REFERER") and self.isSameOrigin(self.getReferer(), self.getRequestUrl()):
+        is_referer_allowed = False
+        if self.env.get("HTTP_REFERER"):
+            if self.isSameOrigin(self.getReferer(), self.getRequestUrl()):
+                is_referer_allowed = True
+            elif self.getReferer() == "%s://%s/" % (self.env["wsgi.url_scheme"], self.env["HTTP_HOST"]):  # Origin-only referer
+                is_referer_allowed = True
+        if content_type != "text/html" and is_referer_allowed:
             headers["Access-Control-Allow-Origin"] = "*"  # Allow load font files from css
 
         if noscript:
             headers["Content-Security-Policy"] = "default-src 'none'; sandbox allow-top-navigation allow-forms; img-src 'self'; font-src 'self'; media-src 'self'; style-src 'self' 'unsafe-inline';"
-        elif script_nonce and "Edge/" not in self.env.get("HTTP_USER_AGENT"):
+        elif script_nonce and self.isScriptNonceSupported():
             headers["Content-Security-Policy"] = "default-src 'none'; script-src 'nonce-{0}'; img-src 'self'; style-src 'self' 'unsafe-inline'; connect-src *; frame-src 'self'".format(script_nonce)
 
         if allow_ajax:
@@ -378,7 +388,7 @@ class UiRequest(object):
             for peer in match.group(1).split(","):
                 if not re.match(".*?:[0-9]+$", peer):
                     continue
-                ip, port = peer.split(":")
+                ip, port = peer.rsplit(":", 1)
                 if site.addPeer(ip, int(port), source="query_string"):
                     num_added += 1
             site.log.debug("%s peers added by query string" % num_added)
@@ -777,30 +787,30 @@ class UiRequest(object):
 
     # Send bad request error
     def error400(self, message=""):
-        self.sendHeader(400)
+        self.sendHeader(400, noscript=True)
         return self.formatError("Bad Request", message)
 
     # You are not allowed to access this
     def error403(self, message="", details=True):
-        self.sendHeader(403)
+        self.sendHeader(403, noscript=True)
         self.log.error("Error 403: %s" % message)
         return self.formatError("Forbidden", message, details=details)
 
     # Send file not found error
     def error404(self, path=""):
-        self.sendHeader(404)
-        return self.formatError("Not Found", cgi.escape(path.encode("utf8")), details=False)
+        self.sendHeader(404, noscript=True)
+        return self.formatError("Not Found", path.encode("utf8"), details=False)
 
     # Internal server error
     def error500(self, message=":("):
-        self.sendHeader(500)
-        return self.formatError("Server error", cgi.escape(message))
+        self.sendHeader(500, noscript=True)
+        return self.formatError("Server error", message)
 
     def formatError(self, title, message, details=True):
         import sys
         import gevent
 
-        if details:
+        if details and config.debug:
             details = {key: val for key, val in self.env.items() if hasattr(val, "endswith") and "COOKIE" not in key}
             details["version_zeronet"] = "%s r%s" % (config.version, config.rev)
             details["version_python"] = sys.version
@@ -815,10 +825,10 @@ class UiRequest(object):
                 </style>
                 <h1>%s</h1>
                 <h2>%s</h3>
-                <h3>Please <a href="https://github.com/HelloZeroNet/ZeroNet/issues" target="_blank">report it</a> if you think this an error.</h3>
+                <h3>Please <a href="https://github.com/HelloZeroNet/ZeroNet/issues" target="_top">report it</a> if you think this an error.</h3>
                 <h4>Details:</h4>
                 <pre>%s</pre>
-            """ % (title, message, json.dumps(details, indent=4, sort_keys=True))
+            """ % (title, cgi.escape(message), cgi.escape(json.dumps(details, indent=4, sort_keys=True)))
         else:
             return """
                 <h1>%s</h1>
